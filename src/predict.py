@@ -57,6 +57,31 @@ def _market_snapshot(features: dict, predicted_price: float) -> dict:
     }
 
 
+def _calibrate_price(raw_model_price: float, market: dict) -> dict:
+    peer_price = market["peer_median_price"]
+    if peer_price is None:
+        fair_price = raw_model_price
+        lower_bound = fair_price * 0.92
+        upper_bound = fair_price * 1.08
+        method = "model_only"
+    else:
+        blended_price = (0.75 * peer_price) + (0.25 * raw_model_price)
+        lower_guard = peer_price * 0.88
+        upper_guard = peer_price * 1.12
+        fair_price = min(max(blended_price, lower_guard), upper_guard)
+        lower_bound = peer_price * 0.94
+        upper_bound = peer_price * 1.06
+        method = "market_calibrated"
+
+    return {
+        "raw_model_price": round(raw_model_price, 2),
+        "fair_price": round(fair_price, 2),
+        "fair_price_range_low": round(lower_bound, 2),
+        "fair_price_range_high": round(upper_bound, 2),
+        "pricing_method": method,
+    }
+
+
 def _extract_listing_signals(description: str) -> dict:
     text = description.lower()
     positives = [label for token, label in POSITIVE_SIGNALS.items() if token in text]
@@ -103,14 +128,19 @@ def predict_listing(features: dict) -> dict:
     sale_model = joblib.load(SALE_MODEL_PATH)
     sale_speed_model = joblib.load(SALE_SPEED_MODEL_PATH)
 
-    predicted_price = float(price_model.predict(df)[0])
+    raw_model_price = float(price_model.predict(df)[0])
     sale_probability = float(sale_model.predict_proba(df)[0, 1])
     sale_speed_bucket = str(sale_speed_model.predict(df)[0])
-    market = _market_snapshot(features, predicted_price)
+    market = _market_snapshot(features, raw_model_price)
+    calibrated = _calibrate_price(raw_model_price, market)
     signals = _extract_listing_signals(features["description"])
     suspicion_flags = _suspicion_flags(features, market)
     return {
-        "predicted_price": round(predicted_price, 2),
+        "predicted_price": calibrated["fair_price"],
+        "raw_model_price": calibrated["raw_model_price"],
+        "fair_price_range_low": calibrated["fair_price_range_low"],
+        "fair_price_range_high": calibrated["fair_price_range_high"],
+        "pricing_method": calibrated["pricing_method"],
         "sell_within_30_days_probability": round(sale_probability, 4),
         "sale_speed_bucket": sale_speed_bucket,
         "market_snapshot": market,

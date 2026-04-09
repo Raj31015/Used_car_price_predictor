@@ -38,44 +38,48 @@ def load_market_reference() -> pd.DataFrame:
 
 def speed_badge(speed: str) -> str:
     labels = {
-        "fast": "🟢 Fast",
-        "medium": "🟠 Medium",
-        "slow": "🔴 Slow",
+        "fast": "[FAST]",
+        "medium": "[MEDIUM]",
+        "slow": "[SLOW]",
     }
     return labels.get(speed.lower(), speed.title())
 
 
 def recommendation_message(result: dict) -> dict:
     market = result["market_snapshot"]
-    predicted_price = result["predicted_price"]
+    fair_price = result["predicted_price"]
+    raw_model_price = result["raw_model_price"]
     peer_price = market["peer_median_price"]
     price_band = market["market_price_band"]
 
     if peer_price is None:
         return {
-            "headline": f"Suggested list price: INR {predicted_price:,.0f}",
-            "body": "Comparable market listings were not available, so this recommendation is based mainly on the model prediction.",
+            "headline": f"Suggested list price: INR {fair_price:,.0f}",
+            "body": "Comparable market listings were not available, so this recommendation is based mainly on the calibrated model output.",
         }
 
     if price_band == "overpriced":
-        target_price = min(predicted_price, peer_price * 0.98)
-        reduction_pct = max(0.0, ((predicted_price - target_price) / predicted_price) * 100)
+        target_price = min(fair_price, peer_price * 0.98)
+        reduction_pct = max(0.0, ((fair_price - target_price) / max(fair_price, 1)) * 100)
         return {
             "headline": f"Suggested price: INR {target_price:,.0f}",
-            "body": f"Reduce the listing by about {reduction_pct:.1f}% to move closer to market and improve sell speed.",
+            "body": f"Reduce the listing by about {reduction_pct:.1f}% to move closer to local market levels and improve sell speed.",
         }
 
     if price_band == "underpriced":
-        target_price = max(predicted_price, peer_price * 0.97)
-        uplift_pct = max(0.0, ((target_price - predicted_price) / max(predicted_price, 1)) * 100)
+        target_price = max(fair_price, peer_price * 0.97)
+        uplift_pct = max(0.0, ((target_price - fair_price) / max(fair_price, 1)) * 100)
         return {
             "headline": f"Suggested price: INR {target_price:,.0f}",
             "body": f"You may be leaving value on the table. A price increase of about {uplift_pct:.1f}% should still stay close to market.",
         }
 
     return {
-        "headline": f"Suggested price: INR {predicted_price:,.0f}",
-        "body": "Your listing is already close to the local market median. Small changes are more likely to affect speed than value.",
+        "headline": f"Suggested price: INR {fair_price:,.0f}",
+        "body": (
+            "Your listing is already close to the local market median. "
+            f"The raw model estimate was INR {raw_model_price:,.0f}, but the displayed fair price is calibrated to local comparables."
+        ),
     }
 
 
@@ -150,7 +154,10 @@ if submitted:
     st.markdown("## Suggested Listing Price")
     hero_col, side_col = st.columns([1.7, 1])
     with hero_col:
-        st.metric("Price Recommendation", f"INR {result['predicted_price']:,.0f}")
+        st.metric("Fair Price", f"INR {result['predicted_price']:,.0f}")
+        st.caption(
+            f"Fair market range: INR {result['fair_price_range_low']:,.0f} to INR {result['fair_price_range_high']:,.0f}"
+        )
         st.caption(recommendation["body"])
     with side_col:
         st.markdown(f"### {speed_badge(result['sale_speed_bucket'])}")
@@ -166,12 +173,13 @@ if submitted:
         "Peer Median Price",
         f"INR {market['peer_median_price']:,.0f}" if market["peer_median_price"] is not None else "Not available",
     )
-    insight_col3.metric(
-        "Peer Median Days",
-        f"{market['peer_median_days_listed']:.0f} days" if market["peer_median_days_listed"] is not None else "Not available",
-    )
+    insight_col3.metric("Raw Model Price", f"INR {result['raw_model_price']:,.0f}")
     if market["market_delta_pct"] is not None:
-        st.caption(f"This listing is {market['market_delta_pct']}% away from the local peer median across {market['peer_sample_size']} comparable listings.")
+        st.caption(
+            f"This listing is {market['market_delta_pct']}% away from the local peer median across {market['peer_sample_size']} comparable listings."
+        )
+    if market["peer_median_days_listed"] is not None:
+        st.caption(f"Comparable listings take about {market['peer_median_days_listed']:.0f} days to sell in this market.")
 
     if not market_reference.empty:
         filtered = market_reference[
@@ -179,11 +187,11 @@ if submitted:
             & (market_reference["model"] == model)
             & (market_reference["city"] == city)
         ].copy()
-        if not filtered.empty:
+        if not filtered.empty and market["peer_median_price"] is not None:
             price_chart_df = pd.DataFrame(
                 {
-                    "Label": ["Predicted Price", "Peer Median Price"],
-                    "Amount": [result["predicted_price"], market["peer_median_price"]],
+                    "Label": ["Fair Price", "Peer Median Price", "Raw Model Price"],
+                    "Amount": [result["predicted_price"], market["peer_median_price"], result["raw_model_price"]],
                 }
             )
             days_chart_df = pd.DataFrame(
