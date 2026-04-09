@@ -57,6 +57,25 @@ def _market_snapshot(features: dict, predicted_price: float) -> dict:
     }
 
 
+def _refresh_market_delta(market: dict, fair_price: float) -> dict:
+    updated = dict(market)
+    peer_price = updated["peer_median_price"]
+    if peer_price is None or not peer_price:
+        return updated
+
+    delta_pct = ((fair_price - peer_price) / peer_price) * 100
+    if delta_pct <= -8:
+        band = "underpriced"
+    elif delta_pct >= 8:
+        band = "overpriced"
+    else:
+        band = "fair"
+
+    updated["market_delta_pct"] = round(delta_pct, 2)
+    updated["market_price_band"] = band
+    return updated
+
+
 def _calibrate_price(raw_model_price: float, market: dict) -> dict:
     peer_price = market["peer_median_price"]
     if peer_price is None:
@@ -133,6 +152,7 @@ def predict_listing(features: dict) -> dict:
     sale_speed_bucket = str(sale_speed_model.predict(df)[0])
     market = _market_snapshot(features, raw_model_price)
     calibrated = _calibrate_price(raw_model_price, market)
+    market = _refresh_market_delta(market, calibrated["fair_price"])
     signals = _extract_listing_signals(features["description"])
     suspicion_flags = _suspicion_flags(features, market)
     return {
