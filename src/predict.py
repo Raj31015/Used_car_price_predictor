@@ -194,7 +194,7 @@ def predict_listing(features: dict) -> dict:
     sale_model = joblib.load(SALE_MODEL_PATH)
     sale_speed_model = joblib.load(SALE_SPEED_MODEL_PATH)
 
-    raw_model_price = float(price_model.predict(df)[0])
+    raw_model_price = float(np.exp(price_model.predict(df)[0]))
     signals = _extract_listing_signals(features["description"])
     boosted_model_price = raw_model_price * _feature_price_boost(features, signals)
     market = _market_snapshot(features, raw_model_price)
