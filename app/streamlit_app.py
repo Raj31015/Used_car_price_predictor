@@ -48,7 +48,6 @@ def speed_badge(speed: str) -> str:
 def recommendation_message(result: dict) -> dict:
     market = result["market_snapshot"]
     fair_price = result["predicted_price"]
-    raw_model_price = result["raw_model_price"]
     peer_price = market["peer_median_price"]
     price_band = market["market_price_band"]
 
@@ -76,10 +75,7 @@ def recommendation_message(result: dict) -> dict:
 
     return {
         "headline": f"Suggested price: INR {fair_price:,.0f}",
-        "body": (
-            "Your listing is already close to the local market median. "
-            f"The raw model estimate was INR {raw_model_price:,.0f}, but the displayed fair price is calibrated to local comparables."
-        ),
+        "body": "Your listing is already close to the local market median. The displayed fair price is calibrated to local comparables rather than relying on a single model output.",
     }
 
 
@@ -161,19 +157,23 @@ if submitted:
         st.caption(recommendation["body"])
     with side_col:
         st.markdown(f"### {speed_badge(result['sale_speed_bucket'])}")
-        st.progress(min(max(result["sell_within_30_days_probability"], 0.0), 1.0))
-        st.caption(f"Sell probability within 30 days: {result['sell_within_30_days_probability'] * 100:.1f}%")
+        speed_progress = {
+            "fast": 0.8,
+            "medium": 0.5,
+            "slow": 0.2,
+        }.get(result["sale_speed_bucket"].lower(), 0.5)
+        st.progress(speed_progress)
+        st.caption("Sale speed is shown as a relative market bucket based on listing characteristics and comparable behavior.")
 
     st.info(recommendation["headline"])
 
     st.subheader("Market Snapshot")
-    insight_col1, insight_col2, insight_col3 = st.columns(3)
+    insight_col1, insight_col2 = st.columns(2)
     insight_col1.metric("Market Price Band", market["market_price_band"].title())
     insight_col2.metric(
         "Peer Median Price",
         f"INR {market['peer_median_price']:,.0f}" if market["peer_median_price"] is not None else "Not available",
     )
-    insight_col3.metric("Raw Model Price", f"INR {result['raw_model_price']:,.0f}")
     if market["market_delta_pct"] is not None:
         st.caption(
             f"This listing is {market['market_delta_pct']}% away from the local peer median across {market['peer_sample_size']} comparable listings."
@@ -190,8 +190,8 @@ if submitted:
         if not filtered.empty and market["peer_median_price"] is not None:
             price_chart_df = pd.DataFrame(
                 {
-                    "Label": ["Fair Price", "Peer Median Price", "Raw Model Price"],
-                    "Amount": [result["predicted_price"], market["peer_median_price"], result["raw_model_price"]],
+                    "Label": ["Fair Price", "Peer Median Price"],
+                    "Amount": [result["predicted_price"], market["peer_median_price"]],
                 }
             )
             days_chart_df = pd.DataFrame(
