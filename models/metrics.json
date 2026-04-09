@@ -1,7 +1,26 @@
 {
-  "price_mae": 129669.05053990644,
-  "sale_accuracy": 0.8697323085078187,
-  "sale_roc_auc": 0.9464382104527848,
-  "sale_speed_macro_f1": 0.7352283784639262,
-  "rows_used": 37729
+  "price_mae": 69278.40903612543,
+  "price_mape": 13.888347774525197,
+  "sale_accuracy": 0.9092097617664149,
+  "sale_roc_auc": 0.949201850244319,
+  "sale_speed_macro_f1": 0.7450598997575718,
+  "segment_mae": {
+    "km_below_20k": {
+      "rows": 840,
+      "mae": 75704.63043154762
+    },
+    "km_above_80k": {
+      "rows": 1987,
+      "mae": 71144.72314182813
+    },
+    "year_2020_or_newer": {
+      "rows": 1008,
+      "mae": 81115.01515997024
+    },
+    "year_before_2015": {
+      "rows": 2733,
+      "mae": 62057.36857677003
+    }
+  },
+  "rows_used": 34420
 }

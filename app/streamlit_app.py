@@ -59,6 +59,7 @@ def recommendation_message(result: dict) -> dict:
 
     if price_band == "overpriced":
         target_price = min(fair_price, peer_price * 0.98)
+        target_price = max(target_price, fair_price * 0.8)
         reduction_pct = max(0.0, ((fair_price - target_price) / max(fair_price, 1)) * 100)
         return {
             "headline": f"Suggested price: INR {target_price:,.0f}",
@@ -169,7 +170,7 @@ if submitted:
 
     st.subheader("Market Snapshot")
     insight_col1, insight_col2 = st.columns(2)
-    insight_col1.metric("Market Price Band", market["market_price_band"].title())
+    insight_col1.metric("Market Position", market.get("market_price_label", market["market_price_band"].title()))
     insight_col2.metric(
         "Peer Median Price",
         f"INR {market['peer_median_price']:,.0f}" if market["peer_median_price"] is not None else "Not available",
