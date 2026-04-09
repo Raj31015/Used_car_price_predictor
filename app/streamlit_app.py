@@ -2,13 +2,14 @@ import json
 from pathlib import Path
 import sys
 
+import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.config import UI_REFERENCE_PATH
+from src.config import MARKET_REFERENCE_PATH, UI_REFERENCE_PATH
 from src.predict import predict_listing
 
 
@@ -29,27 +30,101 @@ def load_ui_reference() -> dict:
     }
 
 
+def load_market_reference() -> pd.DataFrame:
+    if MARKET_REFERENCE_PATH.exists():
+        return pd.DataFrame(json.loads(MARKET_REFERENCE_PATH.read_text()))
+    return pd.DataFrame()
+
+
+def speed_badge(speed: str) -> str:
+    labels = {
+        "fast": "🟢 Fast",
+        "medium": "🟠 Medium",
+        "slow": "🔴 Slow",
+    }
+    return labels.get(speed.lower(), speed.title())
+
+
+def recommendation_message(result: dict) -> dict:
+    market = result["market_snapshot"]
+    predicted_price = result["predicted_price"]
+    peer_price = market["peer_median_price"]
+    price_band = market["market_price_band"]
+
+    if peer_price is None:
+        return {
+            "headline": f"Suggested list price: INR {predicted_price:,.0f}",
+            "body": "Comparable market listings were not available, so this recommendation is based mainly on the model prediction.",
+        }
+
+    if price_band == "overpriced":
+        target_price = min(predicted_price, peer_price * 0.98)
+        reduction_pct = max(0.0, ((predicted_price - target_price) / predicted_price) * 100)
+        return {
+            "headline": f"Suggested price: INR {target_price:,.0f}",
+            "body": f"Reduce the listing by about {reduction_pct:.1f}% to move closer to market and improve sell speed.",
+        }
+
+    if price_band == "underpriced":
+        target_price = max(predicted_price, peer_price * 0.97)
+        uplift_pct = max(0.0, ((target_price - predicted_price) / max(predicted_price, 1)) * 100)
+        return {
+            "headline": f"Suggested price: INR {target_price:,.0f}",
+            "body": f"You may be leaving value on the table. A price increase of about {uplift_pct:.1f}% should still stay close to market.",
+        }
+
+    return {
+        "headline": f"Suggested price: INR {predicted_price:,.0f}",
+        "body": "Your listing is already close to the local market median. Small changes are more likely to affect speed than value.",
+    }
+
+
+def format_signal(label: str) -> str:
+    return label.replace("-", " ").capitalize()
+
+
 st.set_page_config(page_title="Used Car Pricing", layout="wide")
 st.title("Used Car Pricing and Time-to-Sell Predictor")
-st.write("Estimate fair price and market sell-speed from real used-car listing details.")
+st.write("Estimate a fair listing price, likely sale speed, and practical pricing guidance from real used-car listing details.")
 
 ui = load_ui_reference()
+market_reference = load_market_reference()
 
 with st.form("car_form"):
-    col1, col2 = st.columns(2)
+    st.subheader("Vehicle Info")
+    col1, col2, col3 = st.columns(3)
     with col1:
         brand = st.selectbox("Brand", ui["brands"], index=0)
         model = st.selectbox("Model", ui["top_models"], index=0)
+    with col2:
         variant = st.text_input("Variant", "VXI")
-        year = st.number_input("Year", min_value=ui["year_min"], max_value=ui["year_max"], value=max(ui["year_min"], ui["year_max"] - 5))
+        year = st.number_input(
+            "Year",
+            min_value=ui["year_min"],
+            max_value=ui["year_max"],
+            value=max(ui["year_min"], ui["year_max"] - 5),
+        )
+    with col3:
         km_driven = st.number_input("KM Driven", min_value=1000, max_value=300000, value=ui["km_default"])
         fuel_type = st.selectbox("Fuel Type", ui["fuel_types"], index=0)
-    with col2:
-        transmission = st.selectbox("Transmission", ui["transmissions"], index=0)
-        owner_type = st.selectbox("Owner Type", ui["owner_types"], index=0)
-        seller_type = st.selectbox("Seller Type", ui["seller_types"], index=0)
+
+    st.subheader("Listing Info")
+    col4, col5 = st.columns(2)
+    with col4:
         city = st.selectbox("City", ui["cities"], index=0)
-        description = st.text_area("Listing Description", "well maintained, single owner, service history available")
+        seller_type = st.selectbox("Seller Type", ui["seller_types"], index=0)
+        owner_type = st.selectbox("Owner Type", ui["owner_types"], index=0)
+    with col5:
+        transmission = st.selectbox("Transmission", ui["transmissions"], index=0)
+        description = st.text_area(
+            "Listing Description",
+            "well maintained, single owner, service history available",
+            height=120,
+        )
+
+    with st.expander("Advanced (optional)"):
+        st.caption("Use this section only if you want to simulate unusual or edge-case listings.")
+        st.write("The current demo uses the listed fields to drive the pricing and sale-speed recommendation.")
 
     submitted = st.form_submit_button("Predict")
 
@@ -69,25 +144,91 @@ if submitted:
             "description": description,
         }
     )
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Predicted Price", f"INR {result['predicted_price']:,.0f}")
-    col2.metric("Sell Within 30 Days", f"{result['sell_within_30_days_probability'] * 100:.1f}%")
-    col3.metric("Sale Speed Bucket", result["sale_speed_bucket"].title())
-
     market = result["market_snapshot"]
-    st.subheader("Market Intelligence")
-    st.write(f"Price band: **{market['market_price_band'].title()}**")
-    if market["peer_median_price"] is not None:
-        st.write(f"Peer median price in market: INR {market['peer_median_price']:,.0f}")
-        st.write(f"Peer median days listed: {market['peer_median_days_listed']} days")
-        st.write(f"Delta vs peers: {market['market_delta_pct']}% across {market['peer_sample_size']} comparable listings")
+    recommendation = recommendation_message(result)
 
-    st.subheader("Model Explanation")
-    st.write(result["decision_explanation"])
+    st.markdown("## Suggested Listing Price")
+    hero_col, side_col = st.columns([1.7, 1])
+    with hero_col:
+        st.metric("Price Recommendation", f"INR {result['predicted_price']:,.0f}")
+        st.caption(recommendation["body"])
+    with side_col:
+        st.markdown(f"### {speed_badge(result['sale_speed_bucket'])}")
+        st.progress(min(max(result["sell_within_30_days_probability"], 0.0), 1.0))
+        st.caption(f"Sell probability within 30 days: {result['sell_within_30_days_probability'] * 100:.1f}%")
 
-    st.subheader("Listing Signals")
-    st.json(result["listing_signals"])
+    st.info(recommendation["headline"])
 
-    st.subheader("Risk Review")
+    st.subheader("Market Snapshot")
+    insight_col1, insight_col2, insight_col3 = st.columns(3)
+    insight_col1.metric("Market Price Band", market["market_price_band"].title())
+    insight_col2.metric(
+        "Peer Median Price",
+        f"INR {market['peer_median_price']:,.0f}" if market["peer_median_price"] is not None else "Not available",
+    )
+    insight_col3.metric(
+        "Peer Median Days",
+        f"{market['peer_median_days_listed']:.0f} days" if market["peer_median_days_listed"] is not None else "Not available",
+    )
+    if market["market_delta_pct"] is not None:
+        st.caption(f"This listing is {market['market_delta_pct']}% away from the local peer median across {market['peer_sample_size']} comparable listings.")
+
+    if not market_reference.empty:
+        filtered = market_reference[
+            (market_reference["brand"] == brand)
+            & (market_reference["model"] == model)
+            & (market_reference["city"] == city)
+        ].copy()
+        if not filtered.empty:
+            price_chart_df = pd.DataFrame(
+                {
+                    "Label": ["Predicted Price", "Peer Median Price"],
+                    "Amount": [result["predicted_price"], market["peer_median_price"]],
+                }
+            )
+            days_chart_df = pd.DataFrame(
+                {
+                    "Label": ["Predicted Sale Window", "Peer Median Days"],
+                    "Days": [
+                        15 if result["sale_speed_bucket"] == "fast" else 25 if result["sale_speed_bucket"] == "medium" else 40,
+                        market["peer_median_days_listed"],
+                    ],
+                }
+            )
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.subheader("Price vs Market")
+                st.bar_chart(price_chart_df.set_index("Label"))
+            with chart_col2:
+                st.subheader("Expected Time to Sell")
+                st.bar_chart(days_chart_df.set_index("Label"))
+
+    st.subheader("Why The Model Thinks So")
+    for reason in result["decision_explanation"]:
+        st.write(f"- {reason.capitalize()}")
+
+    positive_signals = result["listing_signals"]["positive_signals"]
+    risk_signals = result["listing_signals"]["risk_signals"]
+    signal_col1, signal_col2 = st.columns(2)
+    with signal_col1:
+        st.subheader("Positive Listing Signals")
+        if positive_signals:
+            for signal in positive_signals:
+                st.write(f"- {format_signal(signal)}")
+        else:
+            st.write("- No strong positive text signals detected")
+    with signal_col2:
+        st.subheader("Risk Signals")
+        if risk_signals:
+            for signal in risk_signals:
+                st.write(f"- {format_signal(signal)}")
+        else:
+            st.write("- No obvious risk phrases detected")
+
+    st.subheader("Actionable Review")
     st.write(f"Manual review recommended: **{'Yes' if result['manual_review_recommended'] else 'No'}**")
-    st.write(result["suspicion_flags"] or ["No strong risk flags detected"])
+    if result["suspicion_flags"]:
+        for flag in result["suspicion_flags"]:
+            st.write(f"- {flag.capitalize()}")
+    else:
+        st.write("- No strong risk flags detected")
